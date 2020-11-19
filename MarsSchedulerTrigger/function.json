@@ -1,0 +1,38 @@
+{
+  "bindings": [
+    {
+      "name": "timer",
+      "type": "timerTrigger",
+      "direction": "in",
+      "schedule": "0 */1 * * * *"
+    },
+    {
+      "name": "schedulerConfigsIn",
+      "type": "blob",
+      "path": "scheduler/configs.json",
+      "connection": "mars3queues_STORAGE",
+      "direction": "in"
+    },
+    {
+      "name": "schedulerConfigsOut",
+      "type": "blob",
+      "path": "scheduler/configs.json",
+      "connection": "mars3queues_STORAGE",
+      "direction": "out"
+    },
+    {
+      "name": "schedulerCurrentRunIn",
+      "type": "blob",
+      "path": "scheduler/currentRun.json",
+      "connection": "mars3queues_STORAGE",
+      "direction": "in"
+    },
+    {
+      "name": "schedulerCurrentRunOut",
+      "type": "blob",
+      "path": "scheduler/currentRun.json",
+      "connection": "mars3queues_STORAGE",
+      "direction": "out"
+    }
+  ]
+}
