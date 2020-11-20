@@ -17,12 +17,14 @@ function getBlockUrl(block, domain) {
   return (new URL(`/api/${block}`, `https://${domain}`)).toString();
 }
 
-function prepareLogItem(domain, block, status, statusCode, headers, response, timestamp) {
+function prepareLogItem(domain, cron, block, status, statusCode, headers, response, timestamp) {
   return {
     app: domain,
     block_status_time: `${block}_${status}_${timestamp}`,
     block_time: `${block}_${timestamp}`,
     status_time: `${status}_${timestamp}`,
+    cron,
+    block,
     status,
     statusCode,
     headers: headers ? JSON.stringify(headers) : '',
@@ -64,13 +66,13 @@ module.exports = async function (context, timer) {
     const app = apps[i.domain];
 
     if (!i.enabled || !i.tasks || !i.tasks.length) {
-      app.blocksToCall.push('KeepAlive');
+      app.blocksToCall.push({ block: 'KeepAlive', cron: '-' });
       return;
     }
 
     const tasks = i.tasks.filter(t => t.enabled);
     if (!tasks.length) {
-      app.blocksToCall.push('KeepAlive');
+      app.blocksToCall.push({ block: 'KeepAlive', cron: '-' });
       return;
     }
 
@@ -81,14 +83,14 @@ module.exports = async function (context, timer) {
         const taskNext = moment.utc(later.schedule(cron).next(1));
         const mustExecute = (taskNext.isSameOrAfter(now) && taskNext.isBefore(nextRun)) || taskPrev.isSame(now);
         if (mustExecute) {
-          app.blocksToCall.push(t.block);
+          app.blocksToCall.push({ block: t.block, cron: t.cron });
         }
       }
       catch {}
     });
 
     if (!app.blocksToCall.length) {
-      app.blocksToCall.push('KeepAlive');
+      app.blocksToCall.push({ block: 'KeepAlive', cron: '-' });
       return;
     }
   });
@@ -97,7 +99,7 @@ module.exports = async function (context, timer) {
   const appsFlatten = [];
   Object.keys(apps).forEach(app => {
     apps[app].blocksToCall.forEach(i => {
-      appsFlatten.push({ app, fallback: apps[app].fallback, block: i, url: getBlockUrl(i, app) });
+      appsFlatten.push({ app, fallback: apps[app].fallback, block: i.block, cron: i.cron, url: getBlockUrl(i.block, app) });
     });
   });
 
@@ -106,11 +108,11 @@ module.exports = async function (context, timer) {
   const results = await Promise.allSettled(blockPromises);
 
   // Log to AWS DynamoDB
-  const timestamp = moment().unix();
+  const timestamp = moment().valueOf();
   const logItems = results.map((i, ix) => {
     const app = appsFlatten[ix];
     const response = i.status === 'fulfilled' ? i.value : (i.reason.response ? i.reason.response : { status: i.reason.code, headers: null, data: i.reason.message });
-    return prepareLogItem(app.app, app.block, i.status === 'rejected' ? 'Failed' : 'Success', response.status, response.headers, response.data, timestamp);
+    return prepareLogItem(app.app, app.cron, app.block, i.status === 'rejected' ? 'Failed' : 'Success', response.status, response.headers, response.data, timestamp);
   });
   try { await log(logItems); } catch { }
 
