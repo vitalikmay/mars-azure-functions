@@ -1,6 +1,13 @@
 const axios = require('axios');
 const moment = require('moment');
 const later = require('later');
+const AWS = require('aws-sdk');
+
+AWS.config.update({
+  "region": process.env["AWS_REGION"],
+  "secretAccessKey": process.env["AWS_SECRET_ACCESS_KEY"],
+  "accessKeyId": process.env["AWS_ACCESS_KEY_ID"],
+});
 
 function getBlockUrl(block, domain) {
   if (block === 'KeepAlive') {
@@ -8,6 +15,25 @@ function getBlockUrl(block, domain) {
   }
 
   return (new URL(`/api/${block}`, `https://${domain}`)).toString();
+}
+
+function prepareLogItem(domain, block, status, statusCode, headers, response, timestamp) {
+  return {
+    app: domain,
+    block_status_time: `${block}_${status}_${timestamp}`,
+    block_time: `${block}_${timestamp}`,
+    status_time: `${status}_${timestamp}`,
+    status,
+    statusCode,
+    headers: headers ? JSON.stringify(headers) : '',
+    response,
+    timestamp,
+  };
+}
+
+async function log(items) {
+  const db = new AWS.DynamoDB.DocumentClient();
+  return db.batchWrite({ RequestItems: { [process.env["AWS_LOG_TABLE_NAME"]]: items.map(i => ({ PutRequest: { Item: i } })) } }).promise();
 }
 
 module.exports = async function (context, timer) {
@@ -78,6 +104,15 @@ module.exports = async function (context, timer) {
   // Call blocks
   const blockPromises = appsFlatten.map(i => axios.get(i.url));
   const results = await Promise.allSettled(blockPromises);
+
+  // Log to AWS DynamoDB
+  const timestamp = moment().unix();
+  const logItems = results.map((i, ix) => {
+    const app = appsFlatten[ix];
+    const response = i.status === 'fulfilled' ? i.value : (i.reason.response ? i.reason.response : { status: i.reason.code, headers: null, data: i.reason.message });
+    return prepareLogItem(app.app, app.block, i.status === 'rejected' ? 'Failed' : 'Success', response.status, response.headers, response.data, timestamp);
+  });
+  try { await log(logItems); } catch { }
 
   // prepare fallbacks
   const fallbacks = [];
