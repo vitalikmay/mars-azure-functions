@@ -65,14 +65,14 @@ module.exports = async function (context, timer) {
     apps[i.domain] = { blocksToCall: [], fallback: i.slackFallback };
     const app = apps[i.domain];
 
-    if (!i.enabled || !i.tasks || !i.tasks.length) {
-      app.blocksToCall.push({ block: 'KeepAlive', cron: '-' });
+    if ((!i.enabled || !i.tasks || !i.tasks.length) && i.keepAlive) {
+      app.blocksToCall.push({ block: 'KeepAlive', cron: '-', disableAlerts: !(i.keepAliveAlerts || false) });
       return;
     }
 
     const tasks = i.tasks.filter(t => t.enabled);
-    if (!tasks.length) {
-      app.blocksToCall.push({ block: 'KeepAlive', cron: '-' });
+    if (!tasks.length && i.keepAlive) {
+      app.blocksToCall.push({ block: 'KeepAlive', cron: '-', disableAlerts: !(i.keepAliveAlerts || false) });
       return;
     }
 
@@ -83,14 +83,14 @@ module.exports = async function (context, timer) {
         const taskNext = moment.utc(later.schedule(cron).next(1));
         const mustExecute = (taskNext.isSameOrAfter(now) && taskNext.isBefore(nextRun)) || taskPrev.isSame(now);
         if (mustExecute) {
-          app.blocksToCall.push({ block: t.block, cron: t.cron });
+          app.blocksToCall.push({ block: t.block, cron: t.cron, disableAlerts: t.disableAlerts });
         }
       }
       catch {}
     });
 
-    if (!app.blocksToCall.length) {
-      app.blocksToCall.push({ block: 'KeepAlive', cron: '-' });
+    if (!app.blocksToCall.length && i.keepAlive) {
+      app.blocksToCall.push({ block: 'KeepAlive', cron: '-', disableAlerts: !(i.keepAliveAlerts || false) });
       return;
     }
   });
@@ -99,7 +99,14 @@ module.exports = async function (context, timer) {
   const appsFlatten = [];
   Object.keys(apps).forEach(app => {
     apps[app].blocksToCall.forEach(i => {
-      appsFlatten.push({ app, fallback: apps[app].fallback, block: i.block, cron: i.cron, url: getBlockUrl(i.block, app) });
+      appsFlatten.push({
+        app,
+        fallback: apps[app].fallback,
+        block: i.block,
+        cron: i.cron,
+        disableAlerts: i.disableAlerts || false,
+        url: getBlockUrl(i.block, app),
+      });
     });
   });
 
@@ -119,7 +126,7 @@ module.exports = async function (context, timer) {
   // prepare fallbacks
   const fallbacks = [];
   results.forEach((i, ix) => {
-    if (i.status === 'rejected' && appsFlatten[ix].fallback) {
+    if (i.status === 'rejected' && appsFlatten[ix].fallback && !appsFlatten.disableAlerts) {
       fallbacks.push({ block: appsFlatten[ix].block, fallback: appsFlatten[ix].fallback });
     }
   });
