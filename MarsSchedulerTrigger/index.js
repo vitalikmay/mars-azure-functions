@@ -38,6 +38,26 @@ async function log(items) {
   return db.batchWrite({ RequestItems: { [process.env["AWS_LOG_TABLE_NAME"]]: items.map(i => ({ PutRequest: { Item: i } })) } }).promise();
 }
 
+function isKeepAliveSuccess(headers, data) {
+  if (!headers || !data) {
+    return false;
+  }
+
+  if (!headers['cache-control'] || !headers['cache-control'].includes('max-age=0')) {
+    return false;
+  }
+
+  if (!headers['x-cache'] || !headers['x-cache'].includes('Miss from cloudfront')) {
+    return false;
+  }
+
+  if (!data.toString().toLowerCase().includes("i'm alive")) {
+    return false;
+  }
+
+  return true;
+};
+
 module.exports = async function (context, timer) {
   const nextRun = moment.utc(timer.scheduleStatus.next);
   const now = context.bindings.schedulerCurrentRunIn && context.bindings.schedulerCurrentRunIn.run 
@@ -118,16 +138,30 @@ module.exports = async function (context, timer) {
   const timestamp = moment().valueOf();
   const logItems = results.map((i, ix) => {
     const app = appsFlatten[ix];
-    const response = i.status === 'fulfilled' ? i.value : (i.reason.response ? i.reason.response : { status: i.reason.code, headers: null, data: i.reason.message });
-    return prepareLogItem(app.app, app.cron, app.block, i.status === 'rejected' ? 'Failed' : 'Success', response.status, response.headers, response.data, timestamp);
+    let status = i.status;
+    const response = status === 'fulfilled' ? i.value : (i.reason.response ? i.reason.response : { status: i.reason.code, headers: null, data: i.reason.message });
+    if (app.block === 'KeepAlive' && status === 'fulfilled') {
+      status = isKeepAliveSuccess(response.headers, response.data) ? 'fulfilled' : 'rejected';
+    }
+
+    return prepareLogItem(app.app, app.cron, app.block, status === 'rejected' ? 'Failed' : 'Success', response.status, response.headers, response.data, timestamp);
   });
   try { await log(logItems); } catch { }
 
   // prepare fallbacks
   const fallbacks = [];
   results.forEach((i, ix) => {
-    if (i.status === 'rejected' && appsFlatten[ix].fallback && !appsFlatten.disableAlerts) {
+    if (!appsFlatten[ix].fallback || appsFlatten.disableAlerts) {
+      return;
+    }
+
+    if (i.status === 'rejected') {
       fallbacks.push({ block: appsFlatten[ix].block, fallback: appsFlatten[ix].fallback });
+    } else if (appsFlatten[ix].block === 'KeepAlive') {
+      const response = i.value;
+      if (!isKeepAliveSuccess(response.headers, response.data)) {
+        fallbacks.push({ block: appsFlatten[ix].block, fallback: appsFlatten[ix].fallback });
+      }
     }
   });
 
