@@ -3,6 +3,24 @@ const moment = require('moment');
 const later = require('later');
 const AWS = require('aws-sdk');
 
+axios.interceptors.request.use(function (config) {
+  config.metadata = config.metadata || {};
+  config.metadata.startTime = (new Date()).getTime();
+  return config;
+}, function (error) {
+  return Promise.reject(error);
+});
+
+axios.interceptors.response.use(function (response) {
+  response.config.metadata.endTime = (new Date()).getTime();
+  response.duration = response.config.metadata.endTime - response.config.metadata.startTime;
+  return response;
+}, function (error) {
+  error.config.metadata.endTime = (new Date()).getTime();
+  error.duration = error.config.metadata.endTime - error.config.metadata.startTime;
+  return Promise.reject(error);
+});
+
 AWS.config.update({
   "region": process.env["AWS_REGION"],
   "secretAccessKey": process.env["AWS_SECRET_ACCESS_KEY"],
@@ -17,7 +35,7 @@ function getBlockUrl(block, domain) {
   return (new URL(`/api/${block}`, `https://${domain}`)).toString();
 }
 
-function prepareLogItem(domain, cron, block, status, statusCode, headers, response, timestamp) {
+function prepareLogItem(domain, cron, block, status, statusCode, headers, response, timestamp, duration) {
   return {
     app: domain,
     block_status_time: `${block}_${status}_${timestamp}`,
@@ -30,6 +48,7 @@ function prepareLogItem(domain, cron, block, status, statusCode, headers, respon
     headers: headers ? JSON.stringify(headers) : '',
     response,
     timestamp,
+    duration,
   };
 }
 
@@ -144,7 +163,7 @@ module.exports = async function (context, timer) {
       status = isKeepAliveSuccess(response.headers, response.data) ? 'fulfilled' : 'rejected';
     }
 
-    return prepareLogItem(app.app, app.cron, app.block, status === 'rejected' ? 'Failed' : 'Success', response.status, response.headers, response.data, timestamp);
+    return prepareLogItem(app.app, app.cron, app.block, status === 'rejected' ? 'Failed' : 'Success', response.status, response.headers, response.data, timestamp, response.duration);
   });
   try { await log(logItems); } catch { }
 
