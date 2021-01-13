@@ -163,9 +163,14 @@ module.exports = async function (context, timer) {
       status = isKeepAliveSuccess(response.headers, response.data) ? 'fulfilled' : 'rejected';
     }
 
-    return prepareLogItem(app.app, app.cron, app.block, status === 'rejected' ? 'Failed' : 'Success', response.status, response.headers, response.data, timestamp, response.duration);
+    return prepareLogItem(app.app, app.cron, app.block, status === 'rejected' ? 'Failed' : 'Success', response.status, response.headers, response.data, timestamp, response.duration || 0);
   });
-  try { await log(logItems); } catch { }
+  try {
+    await log(logItems);
+  }
+  catch (ex) {
+    context.log(ex.message);
+  }
 
   // prepare fallbacks
   const fallbacks = [];
