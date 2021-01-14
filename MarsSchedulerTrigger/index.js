@@ -163,7 +163,7 @@ module.exports = async function (context, timer) {
       status = isKeepAliveSuccess(response.headers, response.data) ? 'fulfilled' : 'rejected';
     }
 
-    return prepareLogItem(app.app, app.cron, app.block, status === 'rejected' ? 'Failed' : 'Success', response.status, response.headers, response.data, timestamp, response.duration || 0);
+    return prepareLogItem(app.app, app.cron, app.block, status === 'rejected' ? 'Failed' : 'Success', response.status, response.headers, response.data, timestamp + ix, response.duration || 0);
   });
   try {
     await log(logItems);
@@ -175,7 +175,7 @@ module.exports = async function (context, timer) {
   // prepare fallbacks
   const fallbacks = [];
   results.forEach((i, ix) => {
-    if (!appsFlatten[ix].fallback || appsFlatten.disableAlerts) {
+    if (!appsFlatten[ix].fallback || appsFlatten[ix].disableAlerts) {
       return;
     }
 
