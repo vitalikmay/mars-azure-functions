@@ -78,11 +78,15 @@ function isKeepAliveSuccess(headers, data) {
 };
 
 module.exports = async function (context, timer) {
-  const nextRun = moment.utc(timer.scheduleStatus.next);
+  const veryNow = moment.utc();
+  const nextRun = moment.utc(timer.scheduleStatus.next).isSameOrBefore(veryNow) // is it an Azure function bug?..
+    ? moment.utc(timer.scheduleStatus.next).add(1, 'minutes')
+    : moment.utc(timer.scheduleStatus.next);
+
   const now = context.bindings.schedulerCurrentRunIn && context.bindings.schedulerCurrentRunIn.run 
     ? moment.utc(context.bindings.schedulerCurrentRunIn.run)
-    : moment.utc();
-
+    : veryNow;
+  
   let configs = null;
   try {
     const response = await axios.post(process.env["SCHEDULER_CONFIGS_URL"]);
@@ -92,7 +96,7 @@ module.exports = async function (context, timer) {
     configs = context.bindings.schedulerConfigsIn;   // fetch cached config in case of request error
   }
 
-  context.bindings.schedulerCurrentRunOut = { run: timer.scheduleStatus.next };
+  context.bindings.schedulerCurrentRunOut = { run: nextRun.toISOString() };
   if (!configs || !Array.isArray(configs) || !configs.length) {
     context.done();
     return;
@@ -117,15 +121,16 @@ module.exports = async function (context, timer) {
 
     tasks.forEach(t => {
       try {
-        const cron = later.parse.cron(t.cron, true);
+        const cron = later.parse.cron(t.cron.replace('  ', ' ').trim(), true);
         const taskPrev = moment.utc(later.schedule(cron).prev(1));
         const taskNext = moment.utc(later.schedule(cron).next(1));
         const mustExecute = (taskNext.isSameOrAfter(now) && taskNext.isBefore(nextRun)) || taskPrev.isSame(now);
         if (mustExecute) {
           app.blocksToCall.push({ block: t.block, cron: t.cron, disableAlerts: t.disableAlerts });
         }
+      } catch (ex) {
+        context.log.error(`${t.block}: ` + ex.message);
       }
-      catch {}
     });
 
     if (!app.blocksToCall.length && i.keepAlive) {
@@ -165,11 +170,11 @@ module.exports = async function (context, timer) {
 
     return prepareLogItem(app.app, app.cron, app.block, status === 'rejected' ? 'Failed' : 'Success', response.status, response.headers, response.data, timestamp + ix, response.duration || 0);
   });
+
   try {
     await log(logItems);
-  }
-  catch (ex) {
-    context.log(ex.message);
+  } catch (ex) {
+    context.log.error(ex.message);
   }
 
   // prepare fallbacks
