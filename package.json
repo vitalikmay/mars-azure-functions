@@ -9,8 +9,9 @@
   "dependencies": {
     "aws-sdk": "^2.796.0",
     "axios": "^0.21.1",
-    "later": "^1.2.0",
-    "moment": "^2.29.1"
+    "cron-parser": "^3.5.0",
+    "moment": "^2.29.1",
+    "mongodb": "^3.6.6"
   },
   "devDependencies": {}
 }

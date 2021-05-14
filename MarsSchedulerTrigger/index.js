@@ -1,6 +1,6 @@
 const axios = require('axios');
 const moment = require('moment');
-const later = require('later');
+const cronParser = require('cron-parser');
 const AWS = require('aws-sdk');
 
 axios.interceptors.request.use(function (config) {
@@ -54,7 +54,16 @@ function prepareLogItem(domain, cron, block, status, statusCode, headers, respon
 
 async function log(items) {
   const db = new AWS.DynamoDB.DocumentClient();
-  return db.batchWrite({ RequestItems: { [process.env["AWS_LOG_TABLE_NAME"]]: items.map(i => ({ PutRequest: { Item: i } })) } }).promise();
+
+  const size = 25;
+  const chunks = new Array(Math.ceil(items.length / size)).fill().map(_ => items.splice(0, size));
+  for (let i = 0; i < chunks.length; i++) {
+    try {
+      await db.batchWrite({ RequestItems: { [process.env["AWS_LOG_TABLE_NAME"]]: chunks[i].map(i => ({ PutRequest: { Item: i } })) } }).promise();
+    } catch (ex) {
+      context.log.error(ex.message);
+    }
+  }
 }
 
 function isKeepAliveSuccess(headers, data) {
@@ -78,13 +87,13 @@ function isKeepAliveSuccess(headers, data) {
 };
 
 module.exports = async function (context, timer) {
-  const veryNow = moment.utc();
-  const nextRun = moment.utc(timer.scheduleStatus.next).isSameOrBefore(veryNow) // is it an Azure function bug?..
-    ? moment.utc(timer.scheduleStatus.next).add(1, 'minutes')
-    : moment.utc(timer.scheduleStatus.next);
+  const veryNow = moment();
+  const nextRun = moment(timer.scheduleStatus.next).valueOf() <= veryNow.valueOf() // is it an Azure function bug?..
+    ? moment(moment(timer.scheduleStatus.next).valueOf() + 1 * 60 * 1000) //.add(1, 'minutes')
+    : moment(timer.scheduleStatus.next);
 
   const now = context.bindings.schedulerCurrentRunIn && context.bindings.schedulerCurrentRunIn.run 
-    ? moment.utc(context.bindings.schedulerCurrentRunIn.run)
+    ? moment(context.bindings.schedulerCurrentRunIn.run)
     : veryNow;
   
   let configs = null;
@@ -121,15 +130,16 @@ module.exports = async function (context, timer) {
 
     tasks.forEach(t => {
       try {
-        const cron = later.parse.cron(t.cron.replace('  ', ' ').trim(), true);
-        const taskPrev = moment.utc(later.schedule(cron).prev(1));
-        const taskNext = moment.utc(later.schedule(cron).next(1));
-        const mustExecute = (taskNext.isSameOrAfter(now) && taskNext.isBefore(nextRun)) || taskPrev.isSame(now);
+        const cron = cronParser.parseExpression(t.cron.replace('  ', ' ').trim(), { currentDate: veryNow.toDate() });
+        const taskPrev = moment(cron.prev().getTime());
+        const taskNext = moment(cron.next().getTime());
+
+        const mustExecute = (taskNext.valueOf() >= now.valueOf() && taskNext.valueOf() < nextRun.valueOf()) || taskPrev.valueOf() === now.valueOf();
         if (mustExecute) {
-          app.blocksToCall.push({ block: t.block, cron: t.cron, disableAlerts: t.disableAlerts });
+          app.blocksToCall.push({ block: t.block, cron: t.cron, disableAlerts: t.disableAlerts || false });
         }
       } catch (ex) {
-        context.log.error(`${t.block}: ` + ex.message);
+        context.log.error(`${i.domain}:${t.block}: ` + ex.message);
       }
     });
 
