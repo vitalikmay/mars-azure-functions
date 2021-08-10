@@ -27,12 +27,12 @@ AWS.config.update({
   "accessKeyId": process.env["AWS_ACCESS_KEY_ID"],
 });
 
-function getBlockUrl(block, domain) {
+function getBlockUrl(block, domain, origin) {
   if (block === 'KeepAlive') {
     return (new URL(process.env["KEEP_ALIVE_URL_POSTFIX"], `https://${domain}`)).toString();
   }
 
-  return (new URL(`/api/${block}`, `https://${domain}`)).toString();
+  return (new URL(`/api/${block}`, `https://${origin || domain}`)).toString();
 }
 
 function prepareLogItem(domain, cron, block, status, statusCode, headers, response, timestamp, duration) {
@@ -114,7 +114,7 @@ module.exports = async function (context, timer) {
   // Prepare URLs to execute
   const apps = {};
   configs.forEach(i => {
-    apps[i.domain] = { blocksToCall: [], fallback: i.slackFallback };
+    apps[i.domain] = { blocksToCall: [], fallback: i.slackFallback, origin: i.origin };
     const app = apps[i.domain];
 
     if ((!i.enabled || !i.tasks || !i.tasks.length) && i.keepAlive) {
@@ -159,7 +159,7 @@ module.exports = async function (context, timer) {
         block: i.block,
         cron: i.cron,
         disableAlerts: i.disableAlerts || false,
-        url: getBlockUrl(i.block, app),
+        url: getBlockUrl(i.block, app, apps[app].origin),
       });
     });
   });
